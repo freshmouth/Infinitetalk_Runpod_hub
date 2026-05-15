@@ -585,30 +585,47 @@ def handler(job):
         except Exception as e:
             logger.error(f"❌ 비디오 복사 실패: {e}")
             return {"error": f"비디오 복사 실패: {e}"}
-    else:
-        # 네트워크 볼륨 미사용: Base64 인코딩하여 반환
-        logger.info("Base64 인코딩 시작")
-        logger.info(f"비디오 파일 경로: {output_video_path}")
-
-        try:
-            # 파일 크기 확인
-            file_size = os.path.getsize(output_video_path)
-            logger.info(f"원본 파일 크기: {file_size} bytes")
-
-            # 파일을 읽어 base64 인코딩
-            with open(output_video_path, "rb") as f:
-                video_data = base64.b64encode(f.read()).decode("utf-8")
-
-            encoded_size = len(video_data)
-            logger.info(f"Base64 인코딩 완료: {encoded_size} 문자")
-            logger.info(
-                f"✅ Base64 인코딩된 비디오 반환: {truncate_base64_for_log(video_data)}"
-            )
-            return {"video": video_data}
-
-        except Exception as e:
-            logger.error(f"❌ Base64 인코딩 실패: {e}")
-            return {"error": f"Base64 인코딩 실패: {e}"}
+else:
+        # R2 업로드 또는 Base64 폴백
+        use_r2 = os.environ.get('R2_ACCOUNT_ID')
+        if use_r2:
+            try:
+                import boto3, uuid
+                logger.info("R2 업로드 시작")
+                s3 = boto3.client(
+                    's3',
+                    endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+                    aws_access_key_id=os.environ['R2_ACCESS_KEY_ID'],
+                    aws_secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'],
+                    region_name='auto'
+                )
+                key = f"maya_{uuid.uuid4().hex}.mp4"
+                s3.upload_file(
+                    output_video_path,
+                    os.environ['R2_BUCKET_NAME'],
+                    key,
+                    ExtraArgs={'ContentType': 'video/mp4'}
+                )
+                video_url = f"{os.environ['R2_PUBLIC_URL']}/{key}"
+                logger.info(f"✅ R2 업로드 완료: {video_url}")
+                return {"video_url": video_url}
+            except Exception as e:
+                logger.error(f"❌ R2 업로드 실패: {e}")
+                return {"error": f"R2 업로드 실패: {e}"}
+        else:
+            # Base64 폴백 (R2 미설정시)
+            logger.info("Base64 인코딩 시작")
+            try:
+                file_size = os.path.getsize(output_video_path)
+                logger.info(f"원본 파일 크기: {file_size} bytes")
+                with open(output_video_path, "rb") as f:
+                    video_data = base64.b64encode(f.read()).decode("utf-8")
+                encoded_size = len(video_data)
+                logger.info(f"Base64 인코딩 완료: {encoded_size} 문자")
+                return {"video": video_data}
+            except Exception as e:
+                logger.error(f"❌ Base64 인코딩 실패: {e}")
+                return {"error": f"Base64 인코딩 실패: {e}"}
 
 
 runpod.serverless.start({"handler": handler})
